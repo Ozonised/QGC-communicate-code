@@ -1,0 +1,17 @@
+build
+mx.scratch
+!.settings
+build/
+.cmake/
+CMakeCache.txt
+CMakeFiles/
+*.elf
+*.map
+*.bin
+*.hex
+*.core
+.ninja_*
+build.ninja
+cmake_install.cmake
+compile_commands.json
+qemu_MavlinkTutorial*.core
