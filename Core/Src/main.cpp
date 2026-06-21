@@ -31,6 +31,12 @@
 #include <string.h>
 #define MAVLINK_NO_SIGN_PACKET
 #include "common/mavlink.h"
+#include "lsm6dsl.hpp"
+#define BMP390_RET_TYPE HAL_StatusTypeDef
+#define BMP390_RET_TYPE_SUCCESS HAL_OK
+#define BMP390_RET_TYPE_FAILURE HAL_ERROR
+#define BMP390_RET_TYPE_BUSY HAL_BUSY
+#include "bmp390.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,7 +58,7 @@
 
 /* USER CODE BEGIN PV */
 extern uint8_t UserRxBufferFS[APP_TX_DATA_SIZE];
-extern volatile bool USBD_CDC_Transmit_Complete, USBD_CDC_Receive_Complete;
+extern volatile bool USBD_CDC_Transmit_Complete, USBD_CDC_Receive_Complete, ImuInterrupt = false, BaroInterrupt = false;
 extern volatile uint32_t USB_CDC_Rx_Buf_Index, USB_CDC_Rx_Received_Len;
 
 uint8_t MavlinkTxBuf[APP_TX_DATA_SIZE];
@@ -74,17 +80,28 @@ float P = 10.0f, I = 0.29f, D = 0.01f;
 float *parameters[3] = {&P, &I, &D};
 
 uint8_t FlightCustomVersion[8] = "DEV 0.1", MiddlewareCustomVersion[8] = "MAV 0.1", OsCustomVersion[8] = "CUS OS";
+
+LSM6DSL_AccelRawData xl;
+LSM6DSL_GyroRawData gy;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 bool HandleMavlinkMessage(mavlink_message_t *MsgFromGCS, mavlink_message_t *MsgToGCS, uint8_t *MavLinkTxBuf, uint16_t *MavLinkTxLen);
+
+LSM6DSL_INTF_RET_TYPE LSM6DSL_I2C_Read(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len);
+LSM6DSL_INTF_RET_TYPE LSM6DSL_I2C_Write(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len);
+
+BMP390_RET_TYPE BMP390_I2CRead(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len);
+BMP390_RET_TYPE BMP390_I2CWrite(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+LSM6DSL imu(static_cast<void *>(&hi2c2), LSM6DSL_I2C_Read, LSM6DSL_I2C_Write, HAL_Delay);
+BMP390 baro(static_cast<void *>(&hi2c2), BMP390_I2CRead, BMP390_I2CWrite);
 /* USER CODE END 0 */
 
 /**
@@ -94,7 +111,7 @@ bool HandleMavlinkMessage(mavlink_message_t *MsgFromGCS, mavlink_message_t *MsgT
 int main(void) {
 
   /* USER CODE BEGIN 1 */
-
+  HAL_StatusTypeDef ret;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -119,7 +136,62 @@ int main(void) {
   MX_I2C2_Init();
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
+  imu.setI2CAddress(1);
 
+  baro.Init(1, 0);
+
+  ret = baro.IsPresent();
+
+  while (ret != HAL_OK)
+    ;
+
+  ret = baro.ReadNVM();
+
+  while (ret != HAL_OK)
+    ;
+
+  ret = baro.SetPressureOversampling(bmp390::TempPressOversampling::x8);
+
+  while (ret != HAL_OK)
+    ;
+
+  ret = baro.SetTemperatureOversampling(bmp390::TempPressOversampling::x1);
+
+  while (ret != HAL_OK)
+    ;
+
+  ret = baro.SetOutputDataRate(bmp390::TempPressODR::ODR_50Hz);
+
+  while (ret != HAL_OK)
+    ;
+
+  ret = baro.SetIIRFilterCoefficient(bmp390::IIRFilterCoefficient::coef3);
+
+  while (ret != HAL_OK)
+    ;
+
+  ret = baro.SetInterruptSource(1, 0, 0);
+
+  while (ret != HAL_OK)
+    ;
+
+  ret = baro.ToggleTemperatureAndPressureMeasurement(1, 1);
+  while (ret != HAL_OK)
+    ;
+
+  ret = baro.SetPowerMode(bmp390::PowerMode::Normal);
+
+  imu.softwareReset();
+  HAL_Delay(5);
+  while (imu.isSoftwareResetComplete() != 0)
+    ;
+  imu.setAccelFSRange(LSM6DSL_XL_FS_4G);
+  imu.setGyroFSRange(LSM6DSL_G_FS_1000DPS);
+  imu.configGyroHPF(LSM6DSL_G_HPF_BW_0_260Hz);
+  imu.configAccelDigitalLPF(LSM6DSL_XL_LPF_BW_ODR_9, 1);
+  imu.INT1SourceConfig(static_cast<LSM6DSL_INT1_Sources>(LSM6DSL_INT1_DRDY_XL | LSM6DSL_INT1_DRDY_G));
+  imu.setAccelODR(LSM6DSL_XL_ODR_416Hz);
+  imu.setGyroODR(LSM6DSL_G_ODR_416Hz);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -427,6 +499,36 @@ start:
     break;
   }
   return messageToBeSent;
+}
+
+LSM6DSL_INTF_RET_TYPE LSM6DSL_I2C_Read(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len) {
+  return HAL_I2C_Mem_Read(static_cast<I2C_HandleTypeDef *>(hInterface), chipAddr << 1, RegAddr, 1, buf, len, 10);
+}
+
+LSM6DSL_INTF_RET_TYPE LSM6DSL_I2C_Write(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len) {
+  return HAL_I2C_Mem_Write(static_cast<I2C_HandleTypeDef *>(hInterface), chipAddr << 1, RegAddr, 1, buf, len, 10);
+}
+
+BMP390_RET_TYPE BMP390_I2CRead(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len) {
+  BMP390_RET_TYPE ret = HAL_ERROR;
+  if (hInterface != nullptr) {
+    ret = HAL_I2C_Mem_Read(static_cast<I2C_HandleTypeDef *>(hInterface), static_cast<uint16_t>(chipAddr << 1), static_cast<uint16_t>(reg), 1U, buf,
+                           static_cast<uint16_t>(len), 10U);
+    if (ret == HAL_TIMEOUT)
+      ret = HAL_ERROR;
+  }
+  return ret;
+}
+
+BMP390_RET_TYPE BMP390_I2CWrite(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len) {
+  BMP390_RET_TYPE ret = HAL_ERROR;
+  if (hInterface != nullptr) {
+    ret = HAL_I2C_Mem_Write(static_cast<I2C_HandleTypeDef *>(hInterface), static_cast<uint16_t>(chipAddr << 1), static_cast<uint16_t>(reg), 1U, buf,
+                            static_cast<uint16_t>(len), 10U);
+    if (ret == HAL_TIMEOUT)
+      ret = HAL_ERROR;
+  }
+  return ret;
 }
 /* USER CODE END 4 */
 
