@@ -1,0 +1,6 @@
+[submodule "Drivers/LSM6DSL-Platform-Independent-Library"]
+	path = Drivers/LSM6DSL-Platform-Independent-Library
+	url = git@github.com:Ozonised/LSM6DSL-Platform-Independent-Library.git
+[submodule "Drivers/BMP390-CPP-Library"]
+	path = Drivers/BMP390-CPP-Library
+	url = git@github.com:Ozonised/BMP390-CPP-Library.git
