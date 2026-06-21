@@ -36,6 +36,8 @@
 #define BMP390_RET_TYPE_SUCCESS HAL_OK
 #define BMP390_RET_TYPE_FAILURE HAL_ERROR
 #define BMP390_RET_TYPE_BUSY HAL_BUSY
+#include "AltitudeEKF.hpp"
+#include "ExtendedKalmanFilter.hpp"
 #include "bmp390.hpp"
 /* USER CODE END Includes */
 

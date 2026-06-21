@@ -4,3 +4,9 @@
 [submodule "Drivers/BMP390-CPP-Library"]
 	path = Drivers/BMP390-CPP-Library
 	url = git@github.com:Ozonised/BMP390-CPP-Library.git
+[submodule "Filters/Kalman-AHRS"]
+	path = Filters/Kalman-AHRS
+	url = git@github.com:Ozonised/Kalman-AHRS.git
+[submodule "Filters/AltitudeEKF"]
+	path = Filters/AltitudeEKF
+	url = git@github.com:Ozonised/AltitudeEKF.git
