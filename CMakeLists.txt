@@ -49,9 +49,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/BMP390-CPP-Library/Src/bmp390.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/LSM6DSL-Platform-Independent-Library/LSM6DSL_CPP/Src/lsm6dsl.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Filters/Kalman-AHRS/ExtendedKalmanFilter.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Filters/Kalman-AHRS/quaternion.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Filters/AltitudeEKF/AltitudeEKF.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Lib/Filters/Kalman-AHRS/ExtendedKalmanFilter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Lib/Filters/Kalman-AHRS/quaternion.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Lib/Filters/AltitudeEKF/AltitudeEKF.cpp
 )
 
 # Add include paths
@@ -60,8 +60,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
      ${CMAKE_CURRENT_SOURCE_DIR}/Lib/Mavlink/
      ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/BMP390-CPP-Library/Inc
      ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/LSM6DSL-Platform-Independent-Library/LSM6DSL_CPP/Inc
-     ${CMAKE_CURRENT_SOURCE_DIR}/Filters/Kalman-AHRS
-     ${CMAKE_CURRENT_SOURCE_DIR}/Filters/AltitudeEKF
+     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/Filters/Kalman-AHRS
+     ${CMAKE_CURRENT_SOURCE_DIR}/Lib/Filters/AltitudeEKF
 )
 
 # Add project symbols (macros)

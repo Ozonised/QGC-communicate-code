@@ -1,0 +1,106 @@
+# KALMAN-AHRS-CPP
+![](https://github.com/Ozonised/Kalman-AHRS/blob/main/testKalman.gif)
+
+A quaternion based Extended Kalman Filter for Attitude Heading and Reference System (AHRS) written in C++/Cpp.
+
+## How to use:
+1. Include the following source files into your project directory:
+  - [quaterion.hpp](quaternion.hpp)
+  - [quaterion.cpp](quaternion.cpp)
+  - [ExtendedKalmanFilter.hpp](ExtendedKalmanFilter.hpp)
+  - [ExtendedKalmanFilter.cpp](ExtendedKalmanFilter.cpp)
+
+2. Now create an Quaternion and ExtendedKalmanFilter object.
+```cpp
+ExtendedKalmanFilter ahrs;
+Quaternion q;
+```
+3. Initialize ```ahrs``` using the following functions: ```ahrs.SetSampleTime(sampling frequency);```
+4. Use ```ahrs.Run(accelX, accelY, accelZ, gyroX, gyroY, gyroZ, magX, magY, magZ);``` to compute the orientation quaternion.
+5. Use ```ahrs.GetOrientation(q)``` to get the orientation quaternion.
+
+### Additional Functions:
+- ```void SetGyroNoise(float NoiseX, float NoiseY, float NoiseZ);``` Sets the gyro noise covariance
+- ```void SetR(float NoiseAx, float NoiseAy, float NoiseAz, float NoiseMx, float NoiseMy, float NoiseMz);``` Sets the Measurement Noise Covariance Matrix
+- ```void SetP(float P00, float P11, float P22, float P33);``` Sets the estimated state covariance matrix
+- ```void QuatToEuler(float& roll, float& pitch, float& yaw);``` Get euler angles from quaternion
+- ```void EulerToQuat(float roll, float pitch, float yaw);``` Convert from euler angles to quaternion
+
+## Example:
+### Using only Accelerometer and Gyroscope
+```cpp
+#include "ExtendedKalmanFilter.hpp"
+          .
+          .
+#define IMU_SAMPLING_FREQ 416.0f
+ExtendedKalmanFilter ahrs;
+Quaternion q;
+          .
+          .
+int main(void)
+{
+	float accelX, accelY, accelZ, gyroX, gyroY, gyroZ;
+	uint8_t ahrsComputeSuccess = 0;
+          .
+    funcToInitialiseIMU();
+          .
+          .
+    ahrs.SetSampleTime(IMU_SAMPLING_FREQ);
+          .
+          .
+    if (imuDataAvailable()) {
+        funcToReadIMUData(accelX, accelY, accelZ, gyroX, gyroY, gyroZ);
+        // accelerometer readings should be in m/s^2 and gyro should be in degrees per second
+		ahrsComputeSuccess = ahrs.Run(accelX, accelY, accelZ, gyroX, gyroY, gyroZ);
+        if (ahrsComputeSuccess) {
+            ahrs.GetOrientation(q);
+            ahrsComputeSuccess = 0;
+        }
+    }
+}
+```
+### Note:
+When using only accelerometer and gyroscope,the z component of the quaternion is not calculated.
+
+### Using only Accelerometer, Gyroscope and Magnetometer
+```cpp
+#include "ExtendedKalmanFilter.hpp"
+          .
+          .
+#define IMU_SAMPLING_FREQ 416.0f
+ExtendedKalmanFilter ahrs;
+Quaternion q;
+          .
+          .
+int main(void)
+{
+	float accelX, accelY, accelZ, gyroX, gyroY, gyroZ, magX, magY, magZ;
+	uint8_t ahrsComputeSuccess = 0;
+          .
+    funcToInitialiseIMU();
+          .
+          .
+    ahrs.SetSampleTime(IMU_SAMPLING_FREQ);
+          .
+          .
+    if (imuDataAvailable()) {
+        funcToReadIMUData(accelX, accelY, accelZ, gyroX, gyroY, gyroZ, magX, magY, magZ);
+        // accelerometer readings should be in m/s^2, gyro should be in degrees per second and magnetometer should be in uT
+		ahrsComputeSuccess = ahrs.Run(accelX, accelY, accelZ, gyroX, gyroY, gyroZ, magX, magY, magZ);
+        if (ahrsComputeSuccess) {
+            ahrs.GetOrientation(q);
+            ahrsComputeSuccess = 0;
+        }
+    }
+}
+```
+## Memory Usage
+- The ```ahrs``` object consumes around - ```572``` bytes.
+- ```bool Run(float ax, float ay, float az, float gx, float gy, float gz, float mx, float my, float mz)``` consumes around - ```376``` bytes.
+- ```bool Run(float ax, float ay, float az, float gx, float gy, float gz)``` consumes around - ```336``` bytes.
+
+## Reference:
+This project would not have been made possible without the awesome documentation at:
+- https://ahrs.readthedocs.io/en/latest/filters/ekf.html
+- https://ahrs.readthedocs.io/en/latest/filters/fkf.html
+- https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles

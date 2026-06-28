@@ -370,7 +370,8 @@ start:
         break;
 
       default:
-        mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_DENIED, UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
+        mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_DENIED, UINT8_MAX, 0, MsgFromGCS->sysid,
+                                     MsgFromGCS->compid);
         *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
         messageToBeSent = true;
         break;
@@ -387,7 +388,8 @@ start:
         FcHeartBeat.base_mode = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED;
         FcHeartBeat.system_status = MAV_STATE_STANDBY;
       }
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_ACCEPTED, 100, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_ACCEPTED, 100, 0, MsgFromGCS->sysid,
+                                   MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       messageToBeSent = true;
       break;
@@ -399,7 +401,8 @@ start:
         CurrentMode.intended_custom_mode = (uint8_t)commandLong.param2;
         FcHeartBeat.custom_mode = (uint8_t)commandLong.param2;
       }
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_ACCEPTED, 100, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_ACCEPTED, 100, 0, MsgFromGCS->sysid,
+                                   MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       mavlink_msg_current_mode_encode(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, &CurrentMode);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
@@ -422,7 +425,8 @@ start:
     break;
 
   case MAVLINK_MSG_ID_AUTOPILOT_VERSION:
-    mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
+    mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
+                                 MsgFromGCS->compid);
     *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
     mavlink_msg_autopilot_version_pack(
         1, 1, MsgToGCS,
@@ -437,7 +441,8 @@ start:
     // if param2 is zero, then send all the mode else send only the requested mode
     switch ((uint32_t)commandLong.param2) {
     case 0:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
+                                   MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 1, MAV_STANDARD_MODE_POSITION_HOLD, 1, 0, 0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
@@ -451,7 +456,8 @@ start:
       break;
 
     case 1:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
+                                   MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 1, MAV_STANDARD_MODE_POSITION_HOLD, 1, 0, 0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
@@ -459,7 +465,8 @@ start:
       break;
 
     case 2:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
+                                   MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 2, MAV_STANDARD_MODE_LAND, 2, MAV_MODE_PROPERTY_AUTO_MODE, 0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
@@ -467,7 +474,8 @@ start:
       break;
 
     case 3:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
+                                   MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 3, MAV_STANDARD_MODE_ALTITUDE_HOLD, 3, 0, 0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
@@ -475,7 +483,8 @@ start:
       break;
 
     case 4:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
+                                   MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 4, MAV_STANDARD_MODE_TAKEOFF, 4, MAV_MODE_PROPERTY_AUTO_MODE, 0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
