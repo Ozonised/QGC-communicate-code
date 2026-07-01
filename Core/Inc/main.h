@@ -57,8 +57,18 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define LED_ERROR_Pin GPIO_PIN_4
+#define LED_ERROR_GPIO_Port GPIOA
+#define LED_GPS_Pin GPIO_PIN_5
+#define LED_GPS_GPIO_Port GPIOA
 #define LED_ARM_Pin GPIO_PIN_4
 #define LED_ARM_GPIO_Port GPIOC
+#define BMP390_INT1_Pin GPIO_PIN_10
+#define BMP390_INT1_GPIO_Port GPIOC
+#define BMP390_INT1_EXTI_IRQn EXTI15_10_IRQn
+#define LSM6DSL_INT1_Pin GPIO_PIN_5
+#define LSM6DSL_INT1_GPIO_Port GPIOB
+#define LSM6DSL_INT1_EXTI_IRQn EXTI9_5_IRQn
 
 /* USER CODE BEGIN Private defines */
 

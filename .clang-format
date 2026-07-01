@@ -1,4 +1,18 @@
 BasedOnStyle: LLVM
-IndentWidth: 2
-UseTab: Never
-ColumnLimit: 155
+ColumnLimit: 120
+AlignAfterOpenBracket: DontAlign
+ContinuationIndentWidth: 4
+BinPackParameters: true
+AllowAllParametersOfDeclarationOnNextLine: false
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: true
+  AfterClass: true
+
+# --- ADD THESE TO PREVENT EARLY WRAPPING ---
+AlwaysBreakTemplateDeclarations: false
+PackConstructorInitializers: Never
+AllowShortFunctionsOnASingleLine: None
+PenaltyBreakOpenParenthesis: 1000
+PenaltyBreakAssignment: 100
