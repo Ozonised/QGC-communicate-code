@@ -60,15 +60,17 @@
 
 /* USER CODE BEGIN PV */
 extern uint8_t UserRxBufferFS[APP_TX_DATA_SIZE];
-extern volatile bool USBD_CDC_Transmit_Complete, USBD_CDC_Receive_Complete, ImuInterrupt = false, BaroInterrupt = false;
+extern volatile bool USBD_CDC_Transmit_Complete, USBD_CDC_Receive_Complete;
 extern volatile uint32_t USB_CDC_Rx_Buf_Index, USB_CDC_Rx_Received_Len;
+volatile bool ImuInterrupt = false, BaroInterrupt = false;
 
 uint8_t MavlinkTxBuf[APP_TX_DATA_SIZE];
 uint16_t MavlinkTxLen, MavlinkRxLen;
 bool MavlinkResponseToSend = false, SendOtherMavlinkMessages = false;
 
-uint32_t currentMillis, prevHeartBeatTime;
-const uint32_t HEARTBEAT_MSG_INTERVAL = 1000;
+uint32_t currentMillis, prevHeartBeatTime, prevAttitudeQuaternionTime, prevSysStatusTime, prevAltitudeTime;
+const uint32_t HEARTBEAT_MSG_INTERVAL = 1000, ATTITUDE_QUATERNION_MSG_INTERVAL = 40, ALTITUDE_MSG_INTERVAL = 100,
+               SYS_STATUS_MSG_INTERVAL = 2000;
 
 mavlink_message_t MsgFromGCS, MsgToGCS;
 mavlink_status_t chanStatus;
@@ -86,15 +88,20 @@ uint8_t FlightCustomVersion[8] = "DEV 0.1", MiddlewareCustomVersion[8] = "MAV 0.
 LSM6DSL_AccelRawData xl;
 LSM6DSL_GyroRawData gy;
 
+ExtendedKalmanFilter ahrs;
+Quaternion q;
+AltitudeEKF altimeter;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-bool HandleMavlinkMessage(mavlink_message_t *MsgFromGCS, mavlink_message_t *MsgToGCS, uint8_t *MavLinkTxBuf, uint16_t *MavLinkTxLen);
+bool HandleMavlinkMessage(mavlink_message_t *MsgFromGCS, mavlink_message_t *MsgToGCS, uint8_t *MavLinkTxBuf,
+    uint16_t *MavLinkTxLen);
 
 LSM6DSL_INTF_RET_TYPE LSM6DSL_I2C_Read(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len);
-LSM6DSL_INTF_RET_TYPE LSM6DSL_I2C_Write(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len);
+LSM6DSL_INTF_RET_TYPE LSM6DSL_I2C_Write(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf,
+    uint16_t len);
 
 BMP390_RET_TYPE BMP390_I2CRead(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len);
 BMP390_RET_TYPE BMP390_I2CWrite(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len);
@@ -110,8 +117,8 @@ BMP390 baro(static_cast<void *>(&hi2c2), BMP390_I2CRead, BMP390_I2CWrite);
  * @brief  The application entry point.
  * @retval int
  */
-int main(void) {
-
+int main(void)
+{
   /* USER CODE BEGIN 1 */
   HAL_StatusTypeDef ret;
   /* USER CODE END 1 */
@@ -194,6 +201,16 @@ int main(void) {
   imu.INT1SourceConfig(static_cast<LSM6DSL_INT1_Sources>(LSM6DSL_INT1_DRDY_XL | LSM6DSL_INT1_DRDY_G));
   imu.setAccelODR(LSM6DSL_XL_ODR_416Hz);
   imu.setGyroODR(LSM6DSL_G_ODR_416Hz);
+
+  // EKF for orientation
+  ahrs.SetSampleTime(416.0);
+  ahrs.SetR(3.0e-06f, 3.0e-06f, 3.0e-06f, 1.0f, 1.0f, 1.0f);
+  ahrs.SetGyroNoise(2.35e-05f, 2.35e-05f, 2.35e-05f);
+
+  // EKF for altitude estimation
+  altimeter.SetSamplingTime(416.0f);
+  altimeter.SetProcessNoise(0.0004519f, 0.0004519f);
+  altimeter.SetMeasurementNoise(0.01267f);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -206,13 +223,15 @@ int main(void) {
   FcHeartBeat.system_status = MAV_STATE_STANDBY;
 
   SystemStatus.onboard_control_sensors_present = MAV_SYS_STATUS_SENSOR_3D_GYRO | MAV_SYS_STATUS_SENSOR_3D_ACCEL |
-                                                 MAV_SYS_STATUS_SENSOR_ATTITUDE_STABILIZATION | MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL |
+                                                 MAV_SYS_STATUS_SENSOR_ATTITUDE_STABILIZATION |
+                                                 MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL |
                                                  MAV_SYS_STATUS_SENSOR_MOTOR_OUTPUTS;
 
   SystemStatus.onboard_control_sensors_enabled = MAV_SYS_STATUS_SENSOR_3D_GYRO | MAV_SYS_STATUS_SENSOR_3D_ACCEL;
 
   SystemStatus.onboard_control_sensors_health = MAV_SYS_STATUS_SENSOR_3D_GYRO | MAV_SYS_STATUS_SENSOR_3D_ACCEL |
-                                                MAV_SYS_STATUS_SENSOR_ATTITUDE_STABILIZATION | MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL |
+                                                MAV_SYS_STATUS_SENSOR_ATTITUDE_STABILIZATION |
+                                                MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL |
                                                 MAV_SYS_STATUS_SENSOR_MOTOR_OUTPUTS;
   SystemStatus.load = 1;
   SystemStatus.voltage_battery = UINT16_MAX;
@@ -234,10 +253,84 @@ int main(void) {
 
   uint8_t parseState = 0;
 
-  while (1) {
+  float accelX, accelY, accelZ, gyroX, gyroY, gyroZ;
+  bool ahrsComputeSuccess = 0;
+  float altitude = 0.0f, AzWorld = 0.0f, baroAltitude = 0.0f, altitudeMonotonic = 0.0f;
+  double temperature = 0.0f, pressure = 0.0f;
+  uint16_t baroIntCount = 0;
+
+  while (1)
+  {
     currentMillis = HAL_GetTick();
 
-    if (!MavlinkResponseToSend && USBD_CDC_Transmit_Complete && (currentMillis - prevHeartBeatTime) >= HEARTBEAT_MSG_INTERVAL) {
+    if (BaroInterrupt)
+    {
+      // read temperature(C) and pressure(Pa) data
+      baro.GetTemperatureAndPressure(temperature, pressure);
+      // get estimated altitude in meters
+      baroAltitude = baro.GetAltitude(pressure);
+
+      if (baroIntCount <= 250U)
+        baroIntCount++;
+      else
+      {
+        if (altitudeMonotonic == 0.0f)
+          altitudeMonotonic = baroAltitude;
+        altimeter.Update(baroAltitude);
+      }
+
+      BaroInterrupt = false;
+      HAL_GPIO_TogglePin(LED_GPS_GPIO_Port, LED_GPS_Pin);
+    }
+
+    if (ImuInterrupt && imu.isAccelDataAvailabe() == LSM6DSL_INTF_RET_TYPE_SUCCESS &&
+        imu.isGyroDataAvailabe() == LSM6DSL_INTF_RET_TYPE_SUCCESS)
+    {
+      ImuInterrupt = false;
+      imu.readAccelData(&xl);
+      imu.readGyroData(&gy);
+
+      // remove offset
+      xl.x -= 44;
+      xl.y += 94;
+      xl.z -= 239;
+      gy.x -= 43;
+      gy.y += 157;
+      gy.z += 24;
+
+      accelX = convertAccelRawDataTomS2(xl.x, LSM6DSL_XL_FS_4G);
+      accelY = convertAccelRawDataTomS2(xl.y, LSM6DSL_XL_FS_4G);
+      accelZ = convertAccelRawDataTomS2(xl.z, LSM6DSL_XL_FS_4G);
+
+      gyroX = convertGyroRawDataToDPS(gy.x, LSM6DSL_G_FS_1000DPS);
+      gyroY = convertGyroRawDataToDPS(gy.y, LSM6DSL_G_FS_1000DPS);
+      gyroZ = convertGyroRawDataToDPS(gy.z, LSM6DSL_G_FS_1000DPS);
+
+      ahrsComputeSuccess = ahrs.Run(accelX, accelY, accelZ, gyroX, gyroY, gyroZ);
+
+      HAL_GPIO_TogglePin(LED_ERROR_GPIO_Port, LED_ERROR_Pin);
+
+      if (ahrsComputeSuccess)
+      {
+        ahrs.GetOrientation(q);
+        //			}
+
+        // ignore first 5 seconds
+        if (baroIntCount >= 250)
+        {
+          AzWorld = (2.0f * (q.x * q.z - q.s * q.y) * accelX) + (2.0f * (q.s * q.x + q.y * q.z) * accelY) +
+                    ((q.s * q.s - q.x * q.x - q.y * q.y + q.z * q.z) * accelZ);
+          AzWorld -= 9.81f; // subtract acceleration due to gravity
+
+          altimeter.Predict(AzWorld);
+          altitude = altimeter.GetAltitude();
+        }
+      }
+    }
+
+    if (!MavlinkResponseToSend && USBD_CDC_Transmit_Complete &&
+        (currentMillis - prevHeartBeatTime) >= HEARTBEAT_MSG_INTERVAL)
+    {
       mavlink_msg_heartbeat_encode(1, MAV_COMP_ID_AUTOPILOT1, &MsgToGCS, &FcHeartBeat);
       MavlinkTxLen = mavlink_msg_to_send_buffer(MavlinkTxBuf, &MsgToGCS);
       USBD_CDC_Transmit_Complete = false;
@@ -245,27 +338,57 @@ int main(void) {
       prevHeartBeatTime = currentMillis;
     }
 
+    if (SendOtherMavlinkMessages && ahrsComputeSuccess && !MavlinkResponseToSend && USBD_CDC_Transmit_Complete &&
+        (currentMillis - prevAttitudeQuaternionTime) >= ATTITUDE_QUATERNION_MSG_INTERVAL)
+    {
+      float repr_offset_q[4] = {0};
+      mavlink_msg_attitude_quaternion_pack(1, MAV_COMP_ID_AUTOPILOT1, &MsgToGCS, currentMillis, q.s, q.x, q.y, q.z,
+          gyroX * 0.01745f, gyroY * 0.01745f, gyroZ * 0.01745f, repr_offset_q);
+
+      MavlinkTxLen = mavlink_msg_to_send_buffer(MavlinkTxBuf, &MsgToGCS);
+      USBD_CDC_Transmit_Complete = false;
+      prevAttitudeQuaternionTime = currentMillis;
+      CDC_Transmit_FS(MavlinkTxBuf, MavlinkTxLen);
+      ahrsComputeSuccess = false;
+    }
+
+    if (SendOtherMavlinkMessages && !MavlinkResponseToSend && USBD_CDC_Transmit_Complete &&
+        (currentMillis - prevAltitudeTime) >= ALTITUDE_MSG_INTERVAL)
+    {
+      mavlink_msg_altitude_pack(1, MAV_COMP_ID_AUTOPILOT1, &MsgToGCS, currentMillis * 1000U, altitudeMonotonic,
+          altitude, altitude - altitudeMonotonic, altitude - altitudeMonotonic, -1001, -1.0f);
+
+      MavlinkTxLen = mavlink_msg_to_send_buffer(MavlinkTxBuf, &MsgToGCS);
+      USBD_CDC_Transmit_Complete = false;
+      prevAltitudeTime = currentMillis;
+      CDC_Transmit_FS(MavlinkTxBuf, MavlinkTxLen);
+    }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
 
-    if (USBD_CDC_Receive_Complete) {
+    if (USBD_CDC_Receive_Complete)
+    {
       USBD_CDC_Receive_Complete = false;
 
       static uint32_t i = 0;
       uint32_t MavLinkRxLen = i + USB_CDC_Rx_Received_Len; // total number of bytes in the rx buffer
 
-      while (i < MavLinkRxLen) {
+      while (i < MavLinkRxLen)
+      {
         parseState = mavlink_parse_char(MAVLINK_COMM_0, UserRxBufferFS[i], &MsgFromGCS, &chanStatus);
         i++;
 
-        if (parseState) {
+        if (parseState)
+        {
           MavlinkResponseToSend = HandleMavlinkMessage(&MsgFromGCS, &MsgToGCS, MavlinkTxBuf, &MavlinkTxLen);
           parseState = 0;
 
           // send respone if previous transmission has completed and a mavlink
           // respone has to be sent
-          if (USBD_CDC_Transmit_Complete && MavlinkResponseToSend) {
+          if (USBD_CDC_Transmit_Complete && MavlinkResponseToSend)
+          {
             USBD_CDC_Transmit_Complete = false;
             MavlinkResponseToSend = false;
             CDC_Transmit_FS(MavlinkTxBuf, MavlinkTxLen);
@@ -284,7 +407,8 @@ int main(void) {
  * @brief System Clock Configuration
  * @retval None
  */
-void SystemClock_Config(void) {
+void SystemClock_Config(void)
+{
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
@@ -304,7 +428,8 @@ void SystemClock_Config(void) {
   RCC_OscInitStruct.PLL.PLLN = 96;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
     Error_Handler();
   }
 
@@ -316,20 +441,24 @@ void SystemClock_Config(void) {
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK) {
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
+  {
     Error_Handler();
   }
 }
 
 /* USER CODE BEGIN 4 */
-bool HandleMavlinkMessage(mavlink_message_t *MsgFromGCS, mavlink_message_t *MsgToGCS, uint8_t *MavLinkTxBuf, uint16_t *MavLinkTxLen) {
+bool HandleMavlinkMessage(mavlink_message_t *MsgFromGCS, mavlink_message_t *MsgToGCS, uint8_t *MavLinkTxBuf,
+    uint16_t *MavLinkTxLen)
+{
   bool messageToBeSent = false;
   uint32_t msgID = MsgFromGCS->msgid;
 start:
-  switch (msgID) {
+  switch (msgID)
+  {
   case MAVLINK_MSG_ID_SYS_STATUS:
-    mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
-                                 MsgFromGCS->compid);
+    mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED,
+        UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
     *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
 
     mavlink_msg_sys_status_encode(1, 1, MsgToGCS, &SystemStatus);
@@ -359,9 +488,11 @@ start:
   case MAVLINK_MSG_ID_COMMAND_LONG:
     mavlink_msg_command_long_decode(MsgFromGCS, &commandLong);
 
-    switch (commandLong.command) {
+    switch (commandLong.command)
+    {
     case MAV_CMD_REQUEST_MESSAGE:
-      switch ((uint32_t)commandLong.param1) {
+      switch ((uint32_t)commandLong.param1)
+      {
       case MAVLINK_MSG_ID_AUTOPILOT_VERSION:
       case MAVLINK_MSG_ID_SYS_STATUS:
       case MAVLINK_MSG_ID_AVAILABLE_MODES:
@@ -370,8 +501,8 @@ start:
         break;
 
       default:
-        mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_DENIED, UINT8_MAX, 0, MsgFromGCS->sysid,
-                                     MsgFromGCS->compid);
+        mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_DENIED,
+            UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
         *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
         messageToBeSent = true;
         break;
@@ -380,29 +511,32 @@ start:
 
     case MAV_CMD_COMPONENT_ARM_DISARM:
       // arm
-      if ((uint32_t)commandLong.param1 == 1) {
+      if ((uint32_t)commandLong.param1 == 1)
+      {
         FcHeartBeat.base_mode = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MAV_MODE_FLAG_SAFETY_ARMED;
         FcHeartBeat.system_status = MAV_STATE_ACTIVE;
-      } else {
+      } else
+      {
         // disarm
         FcHeartBeat.base_mode = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED;
         FcHeartBeat.system_status = MAV_STATE_STANDBY;
       }
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_ACCEPTED, 100, 0, MsgFromGCS->sysid,
-                                   MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_ACCEPTED, 100,
+          0, MsgFromGCS->sysid, MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       messageToBeSent = true;
       break;
 
     case MAV_CMD_DO_SET_MODE:
-      if ((uint32_t)commandLong.param1 == MAV_MODE_FLAG_CUSTOM_MODE_ENABLED) {
+      if ((uint32_t)commandLong.param1 == MAV_MODE_FLAG_CUSTOM_MODE_ENABLED)
+      {
         // update flight modes in both current mode and heartbeat object
         CurrentMode.custom_mode = (uint8_t)commandLong.param2;
         CurrentMode.intended_custom_mode = (uint8_t)commandLong.param2;
         FcHeartBeat.custom_mode = (uint8_t)commandLong.param2;
       }
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_ACCEPTED, 100, 0, MsgFromGCS->sysid,
-                                   MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_ACCEPTED, 100,
+          0, MsgFromGCS->sysid, MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       mavlink_msg_current_mode_encode(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, &CurrentMode);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
@@ -410,8 +544,8 @@ start:
       break;
 
     default:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_UNSUPPORTED, UINT8_MAX, 0, MsgFromGCS->sysid,
-                                   MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, commandLong.command, MAV_RESULT_UNSUPPORTED,
+          UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
       messageToBeSent = true;
       break;
@@ -425,68 +559,79 @@ start:
     break;
 
   case MAVLINK_MSG_ID_AUTOPILOT_VERSION:
-    mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
-                                 MsgFromGCS->compid);
+    mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED,
+        UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
     *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
-    mavlink_msg_autopilot_version_pack(
-        1, 1, MsgToGCS,
-        MAV_PROTOCOL_CAPABILITY_COMMAND_INT | MAV_PROTOCOL_CAPABILITY_SET_ATTITUDE_TARGET | MAV_PROTOCOL_CAPABILITY_SET_POSITION_TARGET_GLOBAL_INT |
-            MAV_PROTOCOL_CAPABILITY_MAVLINK2 | MAV_PROTOCOL_CAPABILITY_PARAM_ENCODE_C_CAST | MAV_PROTOCOL_CAPABILITY_COMPONENT_ACCEPTS_GCS_CONTROL,
-        FIRMWARE_VERSION_TYPE_DEV, 0, 1, 12, FlightCustomVersion, MiddlewareCustomVersion, OsCustomVersion, 123, 456, 10101, 0);
+    mavlink_msg_autopilot_version_pack(1, 1, MsgToGCS,
+        MAV_PROTOCOL_CAPABILITY_COMMAND_INT | MAV_PROTOCOL_CAPABILITY_SET_ATTITUDE_TARGET |
+            MAV_PROTOCOL_CAPABILITY_SET_POSITION_TARGET_GLOBAL_INT | MAV_PROTOCOL_CAPABILITY_MAVLINK2 |
+            MAV_PROTOCOL_CAPABILITY_PARAM_ENCODE_C_CAST | MAV_PROTOCOL_CAPABILITY_COMPONENT_ACCEPTS_GCS_CONTROL,
+        FIRMWARE_VERSION_TYPE_DEV, 0, 1, 12, FlightCustomVersion, MiddlewareCustomVersion, OsCustomVersion, 123, 456,
+        10101, 0);
     *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
     messageToBeSent = true;
     break;
 
   case MAVLINK_MSG_ID_AVAILABLE_MODES:
-    // if param2 is zero, then send all the mode else send only the requested mode
-    switch ((uint32_t)commandLong.param2) {
+    // if param2 is zero, then send all the mode else send only the requested
+    // mode
+    switch ((uint32_t)commandLong.param2)
+    {
     case 0:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
-                                   MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED,
+          UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
-      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 1, MAV_STANDARD_MODE_POSITION_HOLD, 1, 0, 0);
+      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 1, MAV_STANDARD_MODE_POSITION_HOLD, 1, 0,
+          0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
-      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 2, MAV_STANDARD_MODE_LAND, 2, MAV_MODE_PROPERTY_AUTO_MODE, 0);
+      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 2, MAV_STANDARD_MODE_LAND, 2,
+          MAV_MODE_PROPERTY_AUTO_MODE, 0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
-      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 3, MAV_STANDARD_MODE_ALTITUDE_HOLD, 3, 0, 0);
+      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 3, MAV_STANDARD_MODE_ALTITUDE_HOLD, 3, 0,
+          0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
-      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 4, MAV_STANDARD_MODE_TAKEOFF, 4, MAV_MODE_PROPERTY_AUTO_MODE, 0);
+      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 4, MAV_STANDARD_MODE_TAKEOFF, 4,
+          MAV_MODE_PROPERTY_AUTO_MODE, 0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
       messageToBeSent = true;
       break;
 
     case 1:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
-                                   MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED,
+          UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
-      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 1, MAV_STANDARD_MODE_POSITION_HOLD, 1, 0, 0);
+      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 1, MAV_STANDARD_MODE_POSITION_HOLD, 1, 0,
+          0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
       messageToBeSent = true;
       break;
 
     case 2:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
-                                   MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED,
+          UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
-      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 2, MAV_STANDARD_MODE_LAND, 2, MAV_MODE_PROPERTY_AUTO_MODE, 0);
+      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 2, MAV_STANDARD_MODE_LAND, 2,
+          MAV_MODE_PROPERTY_AUTO_MODE, 0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
       messageToBeSent = true;
       break;
 
     case 3:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
-                                   MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED,
+          UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
-      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 3, MAV_STANDARD_MODE_ALTITUDE_HOLD, 3, 0, 0);
+      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 3, MAV_STANDARD_MODE_ALTITUDE_HOLD, 3, 0,
+          0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
       messageToBeSent = true;
       break;
 
     case 4:
-      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED, UINT8_MAX, 0, MsgFromGCS->sysid,
-                                   MsgFromGCS->compid);
+      mavlink_msg_command_ack_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MAV_CMD_REQUEST_MESSAGE, MAV_RESULT_ACCEPTED,
+          UINT8_MAX, 0, MsgFromGCS->sysid, MsgFromGCS->compid);
       *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
-      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 4, MAV_STANDARD_MODE_TAKEOFF, 4, MAV_MODE_PROPERTY_AUTO_MODE, 0);
+      mavlink_msg_available_modes_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, 4, 4, MAV_STANDARD_MODE_TAKEOFF, 4,
+          MAV_MODE_PROPERTY_AUTO_MODE, 0);
       *MavLinkTxLen += mavlink_msg_to_send_buffer(&MavLinkTxBuf[*MavLinkTxLen], MsgToGCS);
       messageToBeSent = true;
       break;
@@ -497,7 +642,8 @@ start:
     break;
 
   case MAVLINK_MSG_ID_MISSION_REQUEST_LIST:
-    mavlink_msg_mission_count_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MsgFromGCS->sysid, MsgFromGCS->compid, 0, MAV_MISSION_TYPE_MISSION, 0);
+    mavlink_msg_mission_count_pack(1, MAV_COMP_ID_AUTOPILOT1, MsgToGCS, MsgFromGCS->sysid, MsgFromGCS->compid, 0,
+        MAV_MISSION_TYPE_MISSION, 0);
     *MavLinkTxLen = mavlink_msg_to_send_buffer(MavLinkTxBuf, MsgToGCS);
     messageToBeSent = true;
     break;
@@ -512,34 +658,59 @@ start:
   return messageToBeSent;
 }
 
-LSM6DSL_INTF_RET_TYPE LSM6DSL_I2C_Read(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len) {
+LSM6DSL_INTF_RET_TYPE
+LSM6DSL_I2C_Read(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len)
+{
   return HAL_I2C_Mem_Read(static_cast<I2C_HandleTypeDef *>(hInterface), chipAddr << 1, RegAddr, 1, buf, len, 10);
 }
 
-LSM6DSL_INTF_RET_TYPE LSM6DSL_I2C_Write(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len) {
+LSM6DSL_INTF_RET_TYPE
+LSM6DSL_I2C_Write(void *hInterface, uint8_t chipAddr, uint8_t RegAddr, uint8_t *buf, uint16_t len)
+{
   return HAL_I2C_Mem_Write(static_cast<I2C_HandleTypeDef *>(hInterface), chipAddr << 1, RegAddr, 1, buf, len, 10);
 }
 
-BMP390_RET_TYPE BMP390_I2CRead(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len) {
+BMP390_RET_TYPE
+BMP390_I2CRead(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len)
+{
   BMP390_RET_TYPE ret = HAL_ERROR;
-  if (hInterface != nullptr) {
-    ret = HAL_I2C_Mem_Read(static_cast<I2C_HandleTypeDef *>(hInterface), static_cast<uint16_t>(chipAddr << 1), static_cast<uint16_t>(reg), 1U, buf,
-                           static_cast<uint16_t>(len), 10U);
+  if (hInterface != nullptr)
+  {
+    ret = HAL_I2C_Mem_Read(static_cast<I2C_HandleTypeDef *>(hInterface), static_cast<uint16_t>(chipAddr << 1),
+        static_cast<uint16_t>(reg), 1U, buf, static_cast<uint16_t>(len), 10U);
     if (ret == HAL_TIMEOUT)
       ret = HAL_ERROR;
   }
   return ret;
 }
 
-BMP390_RET_TYPE BMP390_I2CWrite(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len) {
+BMP390_RET_TYPE
+BMP390_I2CWrite(void *hInterface, uint8_t chipAddr, uint8_t reg, uint8_t *buf, uint8_t len)
+{
   BMP390_RET_TYPE ret = HAL_ERROR;
-  if (hInterface != nullptr) {
-    ret = HAL_I2C_Mem_Write(static_cast<I2C_HandleTypeDef *>(hInterface), static_cast<uint16_t>(chipAddr << 1), static_cast<uint16_t>(reg), 1U, buf,
-                            static_cast<uint16_t>(len), 10U);
+  if (hInterface != nullptr)
+  {
+    ret = HAL_I2C_Mem_Write(static_cast<I2C_HandleTypeDef *>(hInterface), static_cast<uint16_t>(chipAddr << 1),
+        static_cast<uint16_t>(reg), 1U, buf, static_cast<uint16_t>(len), 10U);
     if (ret == HAL_TIMEOUT)
       ret = HAL_ERROR;
   }
   return ret;
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  switch (GPIO_Pin)
+  {
+  case LSM6DSL_INT1_Pin:
+    ImuInterrupt = true;
+    break;
+  case BMP390_INT1_Pin:
+    BaroInterrupt = true;
+    break;
+  default:
+    break;
+  }
 }
 /* USER CODE END 4 */
 
@@ -547,11 +718,13 @@ BMP390_RET_TYPE BMP390_I2CWrite(void *hInterface, uint8_t chipAddr, uint8_t reg,
  * @brief  This function is executed in case of error occurrence.
  * @retval None
  */
-void Error_Handler(void) {
+void Error_Handler(void)
+{
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
-  while (1) {
+  while (1)
+  {
   }
   /* USER CODE END Error_Handler_Debug */
 }
@@ -563,7 +736,8 @@ void Error_Handler(void) {
  * @param  line: assert_param error line source number
  * @retval None
  */
-void assert_failed(uint8_t *file, uint32_t line) {
+void assert_failed(uint8_t *file, uint32_t line)
+{
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line
      number, ex: printf("Wrong parameters value: file %s on line %d\r\n", file,
