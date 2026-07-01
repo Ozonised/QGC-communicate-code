@@ -364,6 +364,15 @@ int main(void)
       CDC_Transmit_FS(MavlinkTxBuf, MavlinkTxLen);
     }
 
+    if (SendOtherMavlinkMessages && !MavlinkResponseToSend && USBD_CDC_Transmit_Complete &&
+        (currentMillis - prevSysStatusTime) >= SYS_STATUS_MSG_INTERVAL)
+    {
+      mavlink_msg_sys_status_encode(1, MAV_COMP_ID_AUTOPILOT1, &MsgToGCS, &SystemStatus);
+      MavlinkTxLen = mavlink_msg_to_send_buffer(MavlinkTxBuf, &MsgToGCS);
+      USBD_CDC_Transmit_Complete = false;
+      prevSysStatusTime = currentMillis;
+      CDC_Transmit_FS(MavlinkTxBuf, MavlinkTxLen);
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
