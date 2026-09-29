@@ -306,7 +306,7 @@ int main(void)
       gyroY = convertGyroRawDataToDPS(gy.y, LSM6DSL_G_FS_1000DPS);
       gyroZ = convertGyroRawDataToDPS(gy.z, LSM6DSL_G_FS_1000DPS);
 
-      ahrsComputeSuccess = ahrs.Run(accelX, accelY, accelZ, gyroX, gyroY, gyroZ);
+      ahrsComputeSuccess = ahrs.Run(accelX, -accelY, accelZ, -gyroX, gyroY, gyroZ);
 
       HAL_GPIO_TogglePin(LED_ERROR_GPIO_Port, LED_ERROR_Pin);
 
